@@ -1,0 +1,7 @@
+# dsh-mindmap-chat bundle patch: mounts the plugin into a profile layer stack.
+# The client side is a plain-JS single-file plugin (no build step); src/ and lib/
+# carry the same content. Users override defaults in their profile patch row with
+# the same id.
+- insert:
+    - id: dsh-mindmap-chat
+      name: 'dsh-mindmap-chat'
