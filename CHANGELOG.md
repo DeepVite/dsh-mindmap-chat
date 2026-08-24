@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1] - 2026-08-24
+
+First npm release.
+
+- Added `.github/workflows/publish.yml`: `v*` tags publish to npm automatically.
+- No source changes; bundled as `dsh-mindmap-chat@0.1.1`.
+
 ## [0.1.0] - 2026-08-24
 
 Initial release.
