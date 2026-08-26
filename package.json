@@ -1,6 +1,6 @@
 {
   "name": "dsh-mindmap-chat",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Chat branch tree plugin for DeepSeek Harness: mind-map of conversation branches, group folders, archiving and compaction preview.",
   "keywords": [
     "deepseek",
@@ -26,10 +26,11 @@
     "node": ">=22.19"
   },
   "type": "module",
-  "main": "lib/client.js",
+  "main": "lib/host.js",
   "exports": {
-    ".": "./lib/client.js",
+    ".": "./lib/host.js",
     "./host": "./lib/host.js",
+    "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
