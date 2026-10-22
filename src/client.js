@@ -69,6 +69,15 @@ const CSS = `
 .brm-tag.brm-group { color: var(--brm-green); font-weight:600; }
 .brm-row.brm-grouprow { background: var(--brm-bg2); border:1px solid var(--brm-border); border-radius:4px; margin:2px 0; }
 .brm-grouprow > .brm-row-title { font-weight:600; }
+.brm-wsrow { background: var(--brm-bg2); border:1px solid var(--brm-border); border-radius:4px; margin:3px 0; font-weight:600; }
+.brm-ws-actions { display:none; gap:2px; margin-left:4px; }
+.brm-wsrow:hover .brm-ws-actions { display:inline-flex; }
+.brm-ws-act { height:20px; min-width:20px; padding:0 4px; border-radius:4px; border:1px solid var(--brm-border); background: var(--brm-btn-fill); color: var(--brm-text); cursor:pointer; font-size:11px; line-height:1; }
+.brm-ws-act:hover { background: var(--brm-btn-hover); }
+.brm-ws-act.brm-on { background: var(--brm-active); font-weight:700; }
+.brm-addrow { width:100%; justify-content:flex-start; color: var(--brm-dim); border:1px dashed var(--brm-guide); margin-top:6px; background:none; }
+.brm-addrow:hover { color: var(--brm-text); background: var(--brm-hover); }
+.brm-empty-inline { padding:6px 10px; }
 .brm-dot { width:7px; height:7px; border-radius:50%; flex:none; display:inline-block; }
 .brm-dot.brm-run { background: var(--brm-blue); animation: brmPulse 1.4s ease-in-out infinite; }
 .brm-dot.brm-wait { background: var(--brm-amber); }
@@ -170,6 +179,13 @@ const CSS = `
 .brm-subturn-end .brm-btn { margin:2px 0; }
 .brm-picker-note { padding:10px; color: var(--brm-dim); font-size:12px; }
 .brm-picker-note.brm-err { color: var(--brm-red); }
+.brm-panel { position:fixed; z-index:55; display:flex; flex-direction:column; overflow:hidden; background: var(--brm-bg); color: var(--brm-text); border-right:1px solid var(--brm-guide); font-size:13px; }
+.brm-panel .brm-browser { flex:1; min-height:0; }
+.brm-panel-head { flex:none; display:flex; align-items:center; gap:6px; padding:6px 8px; border-bottom:1px solid var(--brm-border); }
+.brm-panel-title { flex:1; font-weight:700; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.brm-toggle { height:26px; padding:0 10px; border-radius:4px; border:1px solid var(--brm-guide); background: var(--brm-btn-fill); color: var(--brm-text); cursor:pointer; font-size:12px; white-space:nowrap; }
+.brm-toggle:hover { background: var(--brm-btn-hover); }
+.brm-toggle.brm-on { background: var(--brm-active); font-weight:600; }
 .brm-toast { position:fixed; left:50%; bottom:26px; transform:translateX(-50%); background: var(--brm-toast-bg); border:1px solid var(--brm-border); color: var(--brm-toast-text); padding:8px 16px; border-radius:4px; box-shadow:0 4px 16px rgba(0,0,0,.25); z-index:70; animation: brmToastIn .18s ease; max-width:70vw; font-size:13px; pointer-events:none; }
 @keyframes brmToastIn { from { opacity:0; transform:translateX(-50%) translateY(8px); } to { opacity:1; transform:translateX(-50%) translateY(0); } }
 `;
@@ -180,6 +196,16 @@ return {
     if (slots === undefined) return
     const sessions = ctx.get('sessions')
     const workspaces = ctx.get('workspaces')
+    /* 0.2.0-rc.2：会话/子代理的“打开”已经从 ISessions 搬到工作区面
+       （ctx.uiWorkspace.openSession(target)），sessions.open 与
+       sessions.openSubagent 在这版运行时里不存在 —— 直接调用就是静默无效，
+       所以侧边栏/导图/对话详情里点会话没有反应。旧名字保留为回退，兼容更早的宿主。
+       0.2.1：ui-workspace 的 apply 不再保证早于本插件，apply 时一次性探测会永久
+       拿到 undefined（报「未挂载 uiWorkspace」），因此改为点击时惰性解析。 */
+    const getSessionNavigation = () => {
+      const navigation = ctx.get('uiWorkspace')
+      return navigation && typeof navigation.openSession === 'function' ? navigation : null
+    }
 
     styles.insert(CSS)
 
@@ -218,6 +244,27 @@ return {
         } catch (e) { /* 本地存储不可用时回退 */ }
         return false
       })(),
+      /* 左栏「官方会话列表 / 分支树」切换：0.2 的 sidebar.workspaces 是单座且已被官方
+         浏览器占用，插件树改挂在 shell.overlay 上、覆盖左栏显示；默认开（装了插件就该
+         看到树），关掉即回到官方列表。浏览器本地持久化。 */
+      branchListOpen: (function () {
+        try {
+          const v = localStorage.getItem('dsh-branch-list')
+          if (v === '1') return true
+          if (v === '0') return false
+        } catch (e) { /* 本地存储不可用时回退 */ }
+        return true
+      })(),
+      /* 工作区置顶/置底：{ [workspaceId]: { pos: 'top'|'bottom', at: number } }，浏览器本地持久化 */
+      wsPins: (function () {
+        try {
+          const v = JSON.parse(localStorage.getItem('dsh-branch-ws-pins') || 'null')
+          return (v && typeof v === 'object') ? v : {}
+        } catch (e) { /* 本地存储不可用时回退 */ }
+        return {}
+      })(),
+      branchPanelWidth: null,
+      pendingWorkspaceId: null,
       listeners: new Set(),
     }
     if (theme) {
@@ -239,6 +286,83 @@ return {
       return ui
     }
     const themeClass = () => (ui.dark ? 'brm-dark' : 'brm-light')
+
+    /* ---------- 左栏几何（分支树面板用）：按左栏根节点的实际盒子定位 ---------- */
+    const MIN_BRANCH_PANEL_WIDTH = 240
+    const MAX_BRANCH_PANEL_WIDTH = 460
+    /* 左栏根节点：优先用 slot 锚点（data-slot="sidebar"，跨版本稳定）。
+       锚点是 display:contents 没有盒模型，所以量它里面第一个元素子节点。
+       0.2.1 的 [data-sidebar-collapsed] 只在左栏「收起」时才存在，展开时匹配不到，
+       旧写法会永远量不到左栏，面板被 856 行的兜底逻辑强制关闭。 */
+    function sidebarRootEl() {
+      try {
+        const anchor = document.querySelector('[data-slot="sidebar"]')
+        const child = anchor && anchor.firstElementChild
+        if (child) return child
+        if (anchor) return anchor
+        return document.querySelector('[data-sidebar-collapsed], [data-dsh-sidebar]')
+      } catch (e) {
+        return null
+      }
+    }
+    /* 读一次外壳的列几何。返回 null 表示此刻不该显示面板（左栏收起 / 找不到左栏）。
+       顶部与底部带内边距，因此官方列表的样式与滚动条宽度不受影响。 */
+    function measureBranchPanel(width, padTop, padBottom) {
+      let el = sidebarRootEl()
+      let rect = null
+      if (el) {
+        try { rect = el.getBoundingClientRect() } catch (e) { rect = null }
+      }
+      /* 兜底：拿不到左栏根（样式/结构又变了）时，用会话区左边界反推左栏宽度。 */
+      if (!rect || rect.width < 120) {
+        el = null
+        try {
+          const conv = document.querySelector('[data-conversation-session]')
+          if (conv) {
+            const r = conv.getBoundingClientRect()
+            if (r && r.left >= 120) rect = { left: 0, top: r.top, width: r.left, height: 0, bottom: r.bottom }
+          }
+        } catch (e) { rect = null }
+      }
+      if (!rect || rect.width < 120) return null
+      let minW = MIN_BRANCH_PANEL_WIDTH
+      let maxW = MAX_BRANCH_PANEL_WIDTH
+      try {
+        if (!el) throw new Error('no sidebar root')
+        const cs = window.getComputedStyle(el)
+        const lo = parseFloat(cs.getPropertyValue('--dsh-branch-panel-min-width'))
+        const hi = parseFloat(cs.getPropertyValue('--dsh-branch-panel-max-width'))
+        if (isFinite(lo) && lo > 0) minW = lo
+        if (isFinite(hi) && hi > 0) maxW = hi
+      } catch (e) { /* 计算样式不可用时用默认区间 */ }
+      const w = Math.max(minW, Math.min(maxW, Math.round(width || rect.width)))
+      const top = Math.max(0, Math.round(rect.top + padTop))
+      return {
+        left: Math.round(rect.left),
+        top: top,
+        width: w,
+        height: Math.max(160, Math.round(rect.bottom - padBottom - top)),
+      }
+    }
+    function setBranchList(open) {
+      ui.branchListOpen = !!open
+      try { localStorage.setItem('dsh-branch-list', open ? '1' : '0') } catch (e) { /* noop */ }
+      if (open) ui.canvasOpen = false
+      notify()
+    }
+    function toggleBranchList() {
+      setBranchList(!ui.branchListOpen)
+      setToast(ui.branchListOpen ? '已切到分支树（覆盖左栏列表）' : '已切回官方会话列表')
+    }
+    /* 工作区置顶 / 置底（再次点击同一位置即取消） */
+    function setWsPin(id, pos) {
+      const pins = ui.wsPins
+      if (pins[id] && pins[id].pos === pos) delete pins[id]
+      else pins[id] = { pos: pos, at: Date.now() }
+      try { localStorage.setItem('dsh-branch-ws-pins', JSON.stringify(pins)) } catch (e) { /* noop */ }
+      notify()
+    }
+
     let toastDispose = null
     function setToast(text) {
       if (toastDispose) { toastDispose(); toastDispose = null }
@@ -321,16 +445,38 @@ return {
         loadLineage(true)
         roundCache.delete(String(childId))
         roundCache.delete(String(sessionId))
-        if (sessions.open) sessions.open(childId)
+        openConversation(childId)
         return childId
       })
     }
+    /* 打开一个会话或子代理对话。target 可以是会话 id（字符串），
+       也可以是子代理地址 { parentSessionId, childSessionId, mode }。
+       返回 true 表示确实找到了可用的打开通道 —— 调用方据此提示失败，
+       而不是静默无反应。 */
+    function openConversation(target) {
+      if (target == null) return false
+      const sessionNavigation = getSessionNavigation()
+      if (sessionNavigation) {
+        sessionNavigation.openSession(target)
+        return true
+      }
+      if (sessions && typeof sessions.open === 'function') {
+        if (typeof target === 'string') { sessions.open(target); return true }
+        if (typeof sessions.openSubagent === 'function') { sessions.openSubagent(target); return true }
+        return false
+      }
+      return false
+    }
     function openSession(id) {
-      if (sessions && sessions.open) sessions.open(id)
+      if (id == null) return
+      if (!openConversation(String(id))) setToast('当前环境不支持打开会话（未挂载 uiWorkspace）')
     }
     function openSubagent(parentId, entry) {
-      if (!sessions || !sessions.openSubagent) return
-      sessions.openSubagent({ parentSessionId: parentId, childSessionId: entry.id, mode: entry.mode })
+      if (!entry || entry.id == null) return
+      const address = { parentSessionId: String(parentId), childSessionId: String(entry.id), mode: entry.mode }
+      if (openConversation(address)) return
+      /* 回退：部分宿主只认裸会话 id，此时子代理对话也能按其自身会话打开 */
+      if (!openConversation(String(entry.id))) setToast('当前环境不支持打开子代理对话')
     }
     function openDrawer(sessionId) {
       ui.drawer = { open: true, sessionId: sessionId }
@@ -649,13 +795,119 @@ return {
       }, open ? '对话' : '导图')
     }
 
-    /* ---------- 侧边栏浏览器 ---------- */
+    /* ---------- 左栏「官方列表 / 分支树」切换 ---------- */
+    /* 0.2 的 sidebar.workspaces 是单座且已被官方会话浏览器占用，插件无法再占它，
+       所以分支树改挂 shell.overlay：定位在左栏列上、覆盖官方列表显示，切换按钮同时
+       出现在面板头部与会话头部。 */
+    function HeaderBranchListToggle(props) {
+      const ui2 = useUi()
+      const open = !!ui2.branchListOpen
+      return React.createElement('button', {
+        className: 'brm-header-btn-ghost',
+        title: open ? '切回官方会话列表' : '用插件分支树替换左栏会话列表',
+        onClick: toggleBranchList,
+      }, open ? '分支树' : '会话列表')
+    }
+
+    /* 面板自身的容器：负责定位、跟随左栏几何，以及顶部「切回官方列表」入口。 */
+    function BranchListPanel(props) {
+      const ui2 = useUi()
+      const [geom, setGeom] = React.useState(null)
+      const geomRef = React.useRef(null)
+
+      const measure = React.useCallback(() => {
+        const next = measureBranchPanel(ui.branchPanelWidth, 6, 76)
+        const prev = geomRef.current
+        const same = prev && next &&
+          prev.left === next.left && prev.top === next.top &&
+          prev.width === next.width && prev.height === next.height
+        if (same) return
+        if (!prev && !next) return
+        geomRef.current = next
+        setGeom(next)
+      }, [])
+
+      React.useEffect(() => {
+        measure()
+        let timer = null
+        const schedule = () => {
+          if (timer) return
+          timer = ctx.timeout(() => { timer = null; measure() }, 60)
+        }
+        window.addEventListener('resize', schedule)
+        let ro = null
+        const el = sidebarRootEl()
+        if (el && typeof ResizeObserver === 'function') {
+          ro = new ResizeObserver(schedule)
+          try { ro.observe(el) } catch (e) { ro = null }
+        }
+        if (ui.branchListOpen && !geomRef.current) ui.branchListOpen = false
+        return () => {
+          window.removeEventListener('resize', schedule)
+          if (timer) timer()
+          if (ro) ro.disconnect()
+        }
+      }, [measure])
+
+      const onResizeDown = (e) => {
+        e.preventDefault()
+        const startX = e.clientX
+        const startW = (geomRef.current && geomRef.current.width) || 260
+        const move = (ev) => {
+          const w = Math.max(MIN_BRANCH_PANEL_WIDTH, Math.min(MAX_BRANCH_PANEL_WIDTH, Math.round(startW + (ev.clientX - startX))))
+          ui.branchPanelWidth = w
+          const next = measureBranchPanel(w, 6, 76)
+          if (next) { geomRef.current = next; setGeom(next) }
+        }
+        const up = () => {
+          window.removeEventListener('pointermove', move)
+          window.removeEventListener('pointerup', up)
+          window.removeEventListener('pointercancel', up)
+        }
+        window.addEventListener('pointermove', move)
+        window.addEventListener('pointerup', up)
+        window.addEventListener('pointercancel', up)
+      }
+
+      if (!geom) return null
+
+      return React.createElement('div', {
+        className: 'brm-panel ' + themeClass(),
+        style: { left: geom.left, top: geom.top, width: geom.width, height: geom.height },
+      },
+        React.createElement('div', { className: 'brm-panel-head' },
+          React.createElement('div', { className: 'brm-panel-title' }, '分支树'),
+          React.createElement('button', {
+            className: 'brm-toggle',
+            title: '切回官方会话列表',
+            onClick: () => setBranchList(false),
+          }, '官方列表')),
+        React.createElement(SidebarBrowser, {
+          wide: true,
+          panel: true,
+          listState: props.listState,
+          wsState: props.wsState,
+        }),
+        React.createElement('div', {
+          className: 'brm-cv-resize',
+          title: '拖拽调整左栏面板宽度',
+          onPointerDown: onResizeDown,
+        }))
+    }
+
+    /* ---------- 会话/分支列表本体（两种挂载方式共用同一份渲染） ---------- */
+    /* 1) 官方 sidebar.workspaces 座位（0.2 已被官方浏览器占用，通常注册不上）；
+       2) BranchListPanel 在 shell.overlay 上的左栏面板（当前生效路径），
+          这时列表状态由面板传入，所以不调用插槽钩子。 */
     function SidebarBrowser(props) {
-      const wide = props.wide
-      const useSessions = props.useSessions
-      const useWorkspaces = props.useWorkspaces
-      const listState = useSessions ? useSessions(s => s) : null
-      const wsState = useWorkspaces ? useWorkspaces(s => s) : null
+      const isPanel = !!(props && props.panel)
+      const wide = isPanel ? true : !!props.wide
+      const useSessions = isPanel ? null : props.useSessions
+      const useWorkspaces = isPanel ? null : props.useWorkspaces
+      const storeListState = useSessions ? useSessions(s => s) : null
+      const storeWsState = useWorkspaces ? useWorkspaces(s => s) : null
+      const listState = isPanel ? (props.listState || null) : storeListState
+      const wsState = isPanel ? (props.wsState || null) : storeWsState
       const ui2 = useUi()
 
       const [collapsed, setCollapsed] = React.useState({})
@@ -1013,21 +1265,135 @@ return {
         }, childEls))
       }
 
-      const rows = []
-      groupFolderOf.forEach((g, gid) => { rows.push(renderGroupFolder(gid, g)) })
-      plainRoots.forEach(r => rows.push(renderNode(r, false, null)))
-      const chipsEls = [React.createElement('button', {
-        className: 'brm-chip' + (wsFilter === null ? ' brm-active' : ''),
-        key: 'all',
-        onClick: () => setWsFilter(null),
-      }, '全部会话')]
+      /* ---------- 工作区分组：列表里用文件夹分类（替代顶部 tab） ---------- */
+      const wsOfSession = new Map()
+      const wsMetaById = new Map()
       wsItems.forEach(w => {
-        chipsEls.push(React.createElement('button', {
-          className: 'brm-chip' + (wsFilter === w.workspaceId ? ' brm-active' : ''),
-          key: String(w.workspaceId),
-          onClick: () => setWsFilter(wsFilter === w.workspaceId ? null : w.workspaceId),
-        }, w.title || '工作区'))
+        const wid = String(w.workspaceId)
+        wsMetaById.set(wid, w)
+        if (Array.isArray(w.sessionIds)) w.sessionIds.forEach(sid => { if (!wsOfSession.has(String(sid))) wsOfSession.set(String(sid), wid) })
       })
+      const wsIdOf = (sid) => {
+        const hit = wsOfSession.get(String(sid))
+        if (hit) return hit
+        /* 刚在某工作区里新建的空白会话，还没进 workspace.sessionIds —— 先按创建时的工作区归类 */
+        if (ui.pendingWorkspaceId && tree && tree.current != null && String(sid) === String(tree.current)) {
+          return String(ui.pendingWorkspaceId)
+        }
+        return '__none__'
+      }
+      const sections = new Map()
+      const ensureSection = (id) => {
+        let sec = sections.get(id)
+        if (!sec) {
+          const meta = wsMetaById.get(id)
+          sec = { id: id, title: meta ? (meta.title || meta.cwd || id) : '未分组', rows: [] }
+          sections.set(id, sec)
+        }
+        return sec
+      }
+      const pins = ui.wsPins || {}
+      const baseOrder = wsItems.map(w => String(w.workspaceId))
+      const topIds = baseOrder.filter(id => pins[id] && pins[id].pos === 'top').sort((a, b) => (pins[a].at || 0) - (pins[b].at || 0))
+      const bottomIds = baseOrder.filter(id => pins[id] && pins[id].pos === 'bottom').sort((a, b) => (pins[b].at || 0) - (pins[a].at || 0))
+      const midIds = baseOrder.filter(id => !pins[id])
+      baseOrder.forEach(id => ensureSection(id))
+      groupFolderOf.forEach((g, gid) => { ensureSection(wsIdOf(gid)).rows.push(renderGroupFolder(gid, g)) })
+      plainRoots.forEach(r => { ensureSection(wsIdOf(r)).rows.push(renderNode(r, false, null)) })
+
+      /* 在指定工作区里新建会话（不传则用默认工作区） */
+      const startSessionIn = (workspaceId) => {
+        ui.pendingWorkspaceId = workspaceId == null ? null : String(workspaceId)
+        const navigation = getSessionNavigation()
+        if (navigation && typeof navigation.startSession === 'function') {
+          navigation.startSession(ui.pendingWorkspaceId || undefined)
+          return
+        }
+        if (workspaces && typeof workspaces.startSession === 'function') {
+          workspaces.startSession(ui.pendingWorkspaceId || undefined)
+          return
+        }
+        setToast('当前环境不支持新建会话（未挂载 uiWorkspace）')
+      }
+
+      const renderWsSection = (sec) => {
+        const key = 'ws:' + sec.id
+        const isCollapsed = !!collapsed[key]
+        const pinned = pins[sec.id]
+        const row = React.createElement('div', {
+          className: 'brm-row brm-wsrow',
+          key: key + ':row',
+          title: sec.title + '（点击折叠 / 展开）',
+          onClick: () => toggle(key),
+        },
+          React.createElement('button', {
+            className: 'brm-chevron',
+            onClick: (e) => { e.stopPropagation(); toggle(key) },
+          }, isCollapsed ? '▸' : '▾'),
+          React.createElement('span', { className: 'brm-row-title' }, sec.title),
+          React.createElement('span', { className: 'brm-row-tags' },
+            React.createElement('span', { className: 'brm-tag' }, String(sec.rows.length) + ' 项'),
+            pinned ? React.createElement('span', { className: 'brm-tag brm-rep' }, pinned.pos === 'top' ? '置顶' : '置底') : null),
+          React.createElement('span', { className: 'brm-ws-actions' },
+            React.createElement('button', {
+              className: 'brm-ws-act',
+              title: '在此工作区新建会话',
+              onClick: (e) => { e.stopPropagation(); startSessionIn(sec.id) },
+            }, '＋'),
+            React.createElement('button', {
+              className: 'brm-ws-act' + (pinned && pinned.pos === 'top' ? ' brm-on' : ''),
+              title: pinned && pinned.pos === 'top' ? '取消置顶' : '置顶此工作区',
+              onClick: (e) => { e.stopPropagation(); setWsPin(sec.id, 'top') },
+            }, '↑'),
+            React.createElement('button', {
+              className: 'brm-ws-act' + (pinned && pinned.pos === 'bottom' ? ' brm-on' : ''),
+              title: pinned && pinned.pos === 'bottom' ? '取消置底' : '置底此工作区',
+              onClick: (e) => { e.stopPropagation(); setWsPin(sec.id, 'bottom') },
+            }, '↓')))
+        return React.createElement('div', { className: 'brm-node', key: key }, row,
+          React.createElement('div', {
+            className: 'brm-children' + (isCollapsed ? ' brm-hidden' : ''),
+            key: 'kids',
+          }, sec.rows.length === 0
+            ? React.createElement('div', { className: 'brm-empty brm-empty-inline' }, '这个工作区还没有会话')
+            : sec.rows))
+      }
+
+      const sectionEls = []
+      ;[...topIds, ...midIds, ...bottomIds].forEach(id => {
+        const sec = sections.get(id)
+        if (sec) sectionEls.push(renderWsSection(sec))
+      })
+      const noneSec = sections.get('__none__')
+      if (noneSec && noneSec.rows.length > 0) sectionEls.push(renderWsSection(noneSec))
+
+      /* 添加工作区：官方入口在 ui-workspace 的 WorkspaceBrowser 里，本插件占了那个座位后
+         就看不到了；这里用 uiWorkspace.pickDirectory()（宿主目录选择器）+ workspaces.create
+         补一个等价入口。 */
+      const addWorkspace = () => {
+        const navigation = getSessionNavigation()
+        if (!navigation || typeof navigation.pickDirectory !== 'function') {
+          setToast('当前环境不支持添加工作区（未挂载目录选择器）')
+          return
+        }
+        Promise.resolve(navigation.pickDirectory()).then((path) => {
+          if (path == null || path === '') return null
+          return Promise.resolve(workspaces.create({ path })).then((workspace) => {
+            const id = workspace && workspace.workspaceId
+            /* 和官方「添加工作区」一致：注册成功后直接在该工作区开一个新会话 */
+            if (id != null && typeof navigation.startSession === 'function') navigation.startSession(id)
+            setToast('已添加工作区：' + path)
+          })
+        }).catch((reason) => {
+          setToast('添加工作区失败：' + String((reason && reason.message) || reason))
+        })
+      }
+      sectionEls.push(React.createElement('button', {
+        className: 'brm-row brm-addrow',
+        key: '__add-workspace',
+        title: '添加工作区（选择目录后注册，并新建会话）',
+        onClick: addWorkspace,
+      }, '+ 添加工作区'))
 
       return React.createElement('div', {
         ref: (n) => { ui.sidebarEl = n },
@@ -1037,15 +1403,28 @@ return {
           React.createElement('div', { className: 'brm-title' }, '会话'),
           React.createElement('button', {
             className: 'brm-iconbtn',
-            title: '新建会话',
-            onClick: () => { if (workspaces && workspaces.startSession) workspaces.startSession(wsFilter || undefined) },
+            title: '新建会话（默认工作区）',
+            onClick: () => startSessionIn(),
           }, '+'),
+          isPanel ? React.createElement('button', {
+            className: 'brm-toggle brm-on',
+            title: '当前显示分支树；点击切回官方会话列表',
+            onClick: () => setBranchList(false),
+          }, '分支树') : null,
           React.createElement('button', {
             className: 'brm-iconbtn',
             title: '导图视图（消息级分支树）',
-            onClick: () => { ui.canvasOpen = true; notify() },
-          }, '导图')),
-        React.createElement('div', { className: 'brm-chips' }, chipsEls),
+            onClick: () => { ui.canvasOpen = true; if (ui.branchListOpen) setBranchList(false); else notify() },
+          }, '导图'),
+          React.createElement('button', {
+            className: 'brm-iconbtn',
+            title: '对话详情（锚点跳转 / 分叉）',
+            onClick: () => {
+              const id = currentSessionIdOf(listState)
+              if (id == null) { setToast('没有当前会话'); return }
+              openDrawer(id)
+            },
+          }, '详情')),
         React.createElement('div', { className: 'brm-search-wrap' },
           React.createElement('input', {
             className: 'brm-search',
@@ -1060,11 +1439,9 @@ return {
                 React.createElement('div', { className: 'brm-sr-title' }, byId[it.id] ? (byId[it.id].displayTitle || String(it.id)) : String(it.id)),
                 React.createElement('div', { className: 'brm-sr-snippet' }, it.snippet || '')))) : null),
         React.createElement('div', { className: 'brm-tree' },
-          listState && listState.phase === 'pending' && rows.length === 0
+          listState && listState.phase === 'pending' && sectionEls.length <= 1
             ? React.createElement('div', { className: 'brm-empty' }, '加载中…')
-            : rows.length === 0
-              ? React.createElement('div', { className: 'brm-empty' }, '暂无会话。点 + 新建会话，或对任意会话使用 … 菜单。')
-              : rows),
+            : sectionEls),
         menu ? React.createElement('div', { className: 'brm-menu-backdrop', onClick: () => setMenu(null) },
           React.createElement('div', {
             className: 'brm-menu ' + themeClass(),
@@ -1140,8 +1517,7 @@ return {
                 if (menu.confirmDel) { setMenu(null); doHardDelete(menu.id) }
                 else setMenu({ id: menu.id, x: menu.x, y: menu.y, confirmDel: true })
               },
-            }, menu.confirmDel ? '再次点击确认删除' : '删除')])) : null,
-        React.createElement('div', { className: 'brm-foot' }, '分支挂在源会话下 · … 菜单：重命名 / 分叉 / 归档 / 删除 · 导图视图'))
+            }, menu.confirmDel ? '再次点击确认删除' : '删除')])) : null)
     }
 
     /* ---------- 导图画布（P0.1：一轮对话节点 + 嵌入式布局，把聊天挤到右侧） ---------- */
@@ -1379,85 +1755,112 @@ return {
          必须刷新才能拿到新子会话的 seedLength，否则分支会显示全部继承轮次 */
       React.useEffect(() => { loadLineage(true) }, [reloadSeq])
 
-      /* ---------- 嵌入式布局：真实占用一条轨道，把聊天列挤到右侧 ---------- */
-      const applyGrid = (widthPx) => {
+      /* ---------- 嵌入式布局：真实占用栅格的一条轨道，把会话列挤到右侧 ----------
+         只写三个已算好的像素值，并且写之前与当前计算值比对：值没变就一次 DOM 写入
+         都不做，因此不存在"测量→改布局→再测量"的反馈环（200ms 无条件重写的写法
+         正是左侧栏卡死的原因）。 */
+      const CANVAS_MIN_W = 240
+      const CANVAS_MAX_W = 760
+      const CANVAS_MIN_CHAT_W = 320
+
+      /* 定位外壳：会话列 = 框架第 2 个子元素（侧栏 / 会话 / 右侧栏）。 */
+      const locateShell = () => {
         const src = backdropEl
         if (!src) return null
         const layer = src.closest('[data-shell-overlay]')
-        if (!layer || !layer.parentElement || !layer.parentElement.children || layer.parentElement.children.length < 3) return null
-        const frame = layer.parentElement
-        const sidebar = frame.children[0]
-        const center = frame.children[1]
-        const details = frame.children[2]
-        const sbW = Math.round(sidebar.getBoundingClientRect().width)
-        const dW = Math.round(details.getBoundingClientRect().width)
-        const viewW = Math.round(frame.getBoundingClientRect().width)
-        const maxW = Math.min(760, Math.max(240, viewW - sbW - dW - 320))
-        const finalW = Math.min(maxW, Math.max(240, Math.round(widthPx)))
-        frame.style.setProperty('grid-template-columns', sbW + 'px ' + finalW + 'px minmax(0, 1fr) ' + dW + 'px', 'important')
-        center.style.setProperty('grid-column', '3', 'important')
-        details.style.setProperty('grid-column', '4', 'important')
-        return { left: sbW, width: finalW }
+        const frame = layer && layer.parentElement
+        const kids = frame && frame.children
+        if (!frame || !kids || kids.length < 2) return null
+        return { frame: frame, center: kids[1], details: kids[2] || null }
+      }
+      /* 计算目标宽度、必要时写一次栅格，返回 { left, top, height, width }。
+         轨道语义：1=左栏，2=导图面板，3=会话列（自适应剩余宽度），4=右侧栏。 */
+      const applyGrid = (widthPx) => {
+        const r = locateShell()
+        if (!r) return null
+        const frameRect = r.frame.getBoundingClientRect()
+        const frameW = Math.round(frameRect.width)
+        const centerRect = r.center.getBoundingClientRect()
+        const detailsW = r.details ? Math.round(r.details.getBoundingClientRect().width) : 0
+        const sidebarW = Math.max(0, Math.round(centerRect.left - frameRect.left))
+        /* 导图面板宽度：调用方给的目标值，或宽度的 42%；始终给会话列留下至少
+           CANVAS_MIN_CHAT_W，放不下就退化为覆盖模式（返回 null）。 */
+        const requested = widthPx != null ? Math.round(widthPx) : Math.round(frameW * 0.42)
+        const chatMin = Math.min(CANVAS_MIN_CHAT_W, Math.max(160, Math.round(frameW * 0.2)))
+        const maxForPanel = frameW - sidebarW - detailsW - chatMin
+        if (maxForPanel < CANVAS_MIN_W) return null
+        const want = Math.max(CANVAS_MIN_W, Math.min(CANVAS_MAX_W, Math.min(Math.max(240, requested), maxForPanel)))
+        if (Math.abs(Math.round(centerRect.width) - want) > 1) {
+          try {
+            /* 列位置也要显式写：宿主渲染时会重排子元素顺序，只让轨道变宽而列不改位
+               会把会话列压成 0 宽（聊天区消失）。 */
+            r.frame.style.setProperty(
+              'grid-template-columns',
+              sidebarW + 'px ' + want + 'px minmax(' + chatMin + 'px, 1fr)' + (detailsW > 0 ? ' ' + detailsW + 'px' : ''),
+              'important',
+            )
+            r.center.style.setProperty('grid-column', '3', 'important')
+            if (r.details && detailsW > 0) r.details.style.setProperty('grid-column', '4', 'important')
+          } catch (e) { /* 宿主拒绝写样式时按覆盖模式继续 */ }
+        }
+        return {
+          left: sidebarW,
+          top: Math.round(centerRect.top),
+          height: Math.round(centerRect.height),
+          width: want,
+        }
+      }
+      /* 归还轨道：清掉插件写过的内联声明，宿主随即恢复自己的响应式栅格。 */
+      const releaseGrid = () => {
+        try {
+          const layer = document.querySelector('[data-shell-overlay]')
+          const frame = layer && layer.parentElement
+          const kids = frame && frame.children
+          if (!frame || !kids || kids.length < 2) return
+          frame.style.removeProperty('grid-template-columns')
+          if (kids[1]) kids[1].style.removeProperty('grid-column')
+          if (kids[2]) kids[2].style.removeProperty('grid-column')
+        } catch (e) { /* 页面已卸载 */ }
       }
       React.useEffect(() => {
         const el = backdropEl
         if (!el) return
-        const locate = (fromEl) => {
-          const layer = fromEl.closest('[data-shell-overlay]')
-          if (!layer || !layer.parentElement || !layer.parentElement.children || layer.parentElement.children.length < 3) return null
-          return { frame: layer.parentElement, sidebar: layer.parentElement.children[0], center: layer.parentElement.children[1], details: layer.parentElement.children[2] }
-        }
         let stopped = false
-        if (!locate(el)) {
-          setGeom(null)
-          setDegraded(true)
-          return
-        }
         const applyShift = () => {
           if (stopped) return
-          const r = locate(el)
-          if (!r) {
-            setGeom(g => (g === null ? g : null))
+          const fixedW = cWRef.current
+          const want = fixedW != null ? fixedW : (ui.canvasWidth != null ? ui.canvasWidth : null)
+          const res = applyGrid(want != null ? want : Math.min(480, Math.max(300, Math.round((window.innerWidth || 1280) * 0.44))))
+          if (!res) {
+            setGeom(null)
             setDegraded(true)
             if (ui.canvasGeom) { ui.canvasGeom = null; notify() }
             return
           }
           setDegraded(false)
-          const centerW = Math.round(r.center.getBoundingClientRect().width)
-          const fixedW = cWRef.current
-          const want = fixedW != null ? fixedW : Math.min(480, Math.max(300, Math.round(centerW * 0.44)))
-          const res = applyGrid(want)
-          if (res) {
-            setGeom(g => (g && g.left === res.left && g.width === res.width) ? g : res)
-            if (!ui.canvasGeom || ui.canvasGeom.left !== res.left || ui.canvasGeom.width !== res.width) {
-              ui.canvasGeom = res
-              notify()
-            }
+          if (fixedW == null) cWRef.current = res.width
+          setGeom(g => (g && g.left === res.left && g.top === res.top && g.height === res.height && g.width === res.width) ? g : res)
+          if (!ui.canvasGeom || ui.canvasGeom.left !== res.left || ui.canvasGeom.width !== res.width || ui.canvasGeom.top !== res.top) {
+            ui.canvasGeom = res
+            notify()
           }
         }
         applyShift()
-        const stopTimer = ctx.interval(applyShift, 200)
+        /* 宿主布局变化由 ResizeObserver（框架 + 会话列）+ resize 事件驱动；另留
+           1 秒兜底轮询，防止宿主重渲染时把内联栅格覆盖回去。只有宽度真的变了才写 DOM。 */
+        const r0 = locateShell()
+        const ro = (typeof ResizeObserver === 'function' && r0) ? new ResizeObserver(() => applyShift()) : null
+        if (ro && r0) {
+          try { ro.observe(r0.frame); ro.observe(r0.center) } catch (e) { /* 观测失败时靠轮询 */ }
+        }
+        window.addEventListener('resize', applyShift)
+        const stopTimer = ctx.interval(applyShift, 1000)
         return () => {
           stopped = true
           stopTimer()
-          try {
-            /* 卸载后 el 已脱离 DOM，改用 document 根查询定位布局框架（元素仍在页面中） */
-            const doc = el.ownerDocument
-            const layer = doc ? doc.querySelector('[data-shell-overlay]') : null
-            if (layer && layer.parentElement && layer.parentElement.children && layer.parentElement.children.length >= 3) {
-              const frame = layer.parentElement
-              const sidebar = frame.children[0]
-              const center = frame.children[1]
-              const details = frame.children[2]
-              const sbW = Math.round(sidebar.getBoundingClientRect().width)
-              const dW = Math.round(details.getBoundingClientRect().width)
-              frame.style.setProperty('grid-template-columns', sbW + 'px minmax(0, 1fr) ' + dW + 'px')
-              center.style.removeProperty('grid-column')
-              details.style.removeProperty('grid-column')
-            }
-          } catch (e) {
-            /* 恢复尽力而为 */
-          }
+          if (ro) ro.disconnect()
+          window.removeEventListener('resize', applyShift)
+          releaseGrid()
           if (ui.canvasGeom) { ui.canvasGeom = null; notify() }
         }
       }, [backdropEl])
@@ -1472,14 +1875,14 @@ return {
       }
       const onResizeMove = (e) => {
         if (dragWRef.w == null) return
-        const next = Math.round(dragWRef.w + (e.clientX - dragWRef.startX))
+        const next = Math.max(CANVAS_MIN_W, Math.min(CANVAS_MAX_W, Math.round(dragWRef.w + (e.clientX - dragWRef.startX))))
         const res = applyGrid(next)
         if (res) {
           setCW(res.width)
           cWRef.current = res.width
           ui.canvasWidth = res.width
-          setGeom(g => (g && g.left === res.left && g.width === res.width) ? g : res)
-          if (!ui.canvasGeom || ui.canvasGeom.left !== res.left || ui.canvasGeom.width !== res.width) {
+          setGeom(g => (g && g.left === res.left && g.top === res.top && g.height === res.height && g.width === res.width) ? g : res)
+          if (!ui.canvasGeom || ui.canvasGeom.left !== res.left || ui.canvasGeom.width !== res.width || ui.canvasGeom.top !== res.top) {
             ui.canvasGeom = res
             notify()
           }
@@ -2072,14 +2475,22 @@ return {
       return [
         ui2.canvasOpen ? React.createElement(CanvasPanel, { key: 'canvas', listState: listState, archivedSet: archivedSet }) : null,
         React.createElement(DrawerPanel, { key: 'drawer', listState: listState }),
+        ui2.branchListOpen ? React.createElement(BranchListPanel, { key: 'branchlist', listState: listState, wsState: wsState }) : null,
         ui2.toast ? React.createElement('div', { className: 'brm-toast ' + themeClass(), key: 'toast:' + ui2.toast.key }, ui2.toast.text) : null,
       ]
     }
 
     /* ---------- 插槽注册 ---------- */
+    /* 0.2.1：ui-workspace 因为新增 remoteAccess 依赖而延迟 apply，官方 WorkspaceBrowser
+       注册得比本插件晚，这个单座插槽实际由本插件占住 —— 也就是「分支树直接当左栏用」。
+       保留这个座位，否则插件在左栏完全不可见（覆盖层面板依赖左栏 DOM，暂不可靠）。 */
     slots.inject('sidebar.workspaces', () => slots.register(
       { name: 'sidebar.workspaces' },
       (props) => React.createElement(SidebarBrowser, props),
+    ))
+    slots.inject('conversation.session.header.actions', () => slots.register(
+      { name: 'conversation.session.header.actions', id: 'branch-list-toggle', order: 10, label: () => '分支树 / 官方列表' },
+      (props) => React.createElement(HeaderBranchListToggle, props),
     ))
     slots.inject('shell.overlay', () => slots.register(
       { name: 'shell.overlay', id: 'branch-map-panel', order: 10 },

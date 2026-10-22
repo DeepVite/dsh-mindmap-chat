@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1] - 2026-10-22
+
+- **Project kanban home**: a new right-side main panel shows one column per Workspace/project, with horizontal scrolling.
+- **Same tree as the left sidebar**: each project board reuses the existing tree renderer, so branch nesting, group folders, color marks, run state, subagents, rename, fork, reparent-to-group, archive, delete and the row `⋯` menu behave identically.
+- **Top toolbar** in the session sidebar is now `主页 / + / 导图 / 详情`; 主页 opens the board and clicking a tree row closes it and opens that conversation.
+- Per-project new-session, project pin/unpin, and "添加项目" (directory picker) actions on each board header.
+- Added bundle locale metadata (zh/en) and icon.
+
 ## [0.2.0] - 2026-08-24
 
 Static-plugin release: fixes the "loads with errors" problem of 0.1.x.
