@@ -24,12 +24,15 @@
 - The session toolbar is fixed to **Home / + / Map / Details**
 - **Home** opens a project kanban in the main area; each Workspace/project is one horizontally scrolling column
 - **Each board reuses the exact left-sidebar tree**: branch nesting, group folders, color marks, run state, subagents, and the row `⋯` menu (rename / fork / choose fork point / re-parent into a group / highlight color / archive / delete) all behave identically
-- Clicking a tree row closes Home and opens that conversation; each board header supports new session, pin/unpin, and "Add project" via the directory picker
+- Clicking a tree row closes Home and opens that conversation; each board header supports new session and "Add project" via the directory picker; board order follows the left sidebar's custom project order
 
-### 3. Left sidebar conversation tree (groups)
+### 3. Left sidebar conversation tree (groups / project navigation)
 - Sessions are aggregated into **groups**; groups with 2+ members render as collapsible group folders
 - The "More" menu can re-parent any session **into a group**: choose to merge all related branches (Yes) or move only the current session (No); child sessions take its original place
 - Archive, delete (terminal soft-delete), color marks, and pre-compaction fold blocks (default open/collapsed is configurable)
+- **Custom project order**: drag the `⋮⋮` grip before a project, or use the row's `↑` / `↓`; the order is stored locally and shared with Home boards
+- **Folded project area**: project row `⋯` → "Move into folded area"; folded projects collect at the bottom and can be expanded, while still appearing in the sticky project directory with a folded marker
+- **Sticky project directory**: the top of the list shows all project chips (wrapping, scrollable); the current project's folder row sticks below it. Clicking a chip expands and scrolls to that project; folded projects open the folded area first
 
 ### 4. Compaction support
 - Compaction history is shown as a folded "pre-compaction summary" block; default open/collapsed is configurable
@@ -55,7 +58,7 @@ npm exec -- dsh plugin --profile web add https://github.com/DeepVite/dsh-mindmap
 
 **Refresh the page** after install (on desktop clients that cannot refresh, close and reopen the window). If git install warns about pnpm blocking build scripts, add the package name to `allowBuilds` in your profile's `pnpm-workspace.yaml` and retry.
 
-> The runtime is loaded from `lib/` (`lib/client.js` and `lib/host.js`, plain JavaScript, no build step). Starting with v0.2.1 the kanban home is maintained in `lib/`; the `src/` dynamic-plugin snapshot may lag behind `lib/` and is not what ships to npm.
+> The runtime is loaded from `lib/` (`lib/client.js` and `lib/host.js`, plain JavaScript, no build step). Starting with v0.2.2 the kanban home is maintained in `lib/`; the `src/` dynamic-plugin snapshot may lag behind `lib/` and is not what ships to npm.
 
 ## 🔄 Update
 

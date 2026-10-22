@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2] - 2026-10-22
+
+- **Custom project order** in the left sidebar: drag the `⋮⋮` grip before a project, or use the row `↑` / `↓`; the order persists in browser localStorage and is shared with Home boards.
+- **Folded project area**: project row `⋯` can move a project into the folded area at the bottom; folded projects can be expanded again, and show a `折` marker in the project directory.
+- **Sticky multi-project directory**: all projects render as wrapping, scrollable chips at the top of the session list. The current project's folder row sticks below the directory; clicking a chip expands and scrolls to that project, and folded projects open the folded area first.
+- Home board order follows the same custom project order; the previous per-board pin/unpin shortcuts were removed in favour of manual project ordering.
+
 ## [0.2.1] - 2026-10-22
 
 - **Project kanban home**: a new right-side main panel shows one column per Workspace/project, with horizontal scrolling.
